@@ -1,0 +1,7 @@
+{
+  "name": "Luach Hebrew Calendar",
+  "description": "Kalender Ibrani akurat dengan multi-bahasa (termasuk Ibrani), integrasi hari raya Yahudi, pengingat notifikasi otomatis, dan rencana kegiatan.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+

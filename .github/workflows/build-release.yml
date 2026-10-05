@@ -1,0 +1,138 @@
+name: Build & Sign Android APK & AAB (Play Store Ready)
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build & Sign Release Bundle
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+          cache: 'gradle'
+
+      - name: Grant Execute Permission to Gradle Wrapper
+        run: chmod +x gradlew
+
+      - name: Setup Signing Keystore
+        id: setup-keystore
+        run: |
+          KEYSTORE_FILE="${{ github.workspace }}/my-upload-key.jks"
+          
+          if [ -n "${{ secrets.KEYSTORE_BASE64 }}" ]; then
+            echo "Decoding release keystore from GitHub Secrets..."
+            echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode > "$KEYSTORE_FILE"
+            echo "STORE_PASSWORD=${{ secrets.STORE_PASSWORD }}" >> $GITHUB_ENV
+            echo "KEY_PASSWORD=${{ secrets.KEY_PASSWORD }}" >> $GITHUB_ENV
+            echo "KEY_ALIAS=${{ secrets.KEY_ALIAS || 'upload' }}" >> $GITHUB_ENV
+          else
+            echo "Generating automatic release keystore for Play Store signature..."
+            PASS="LuachCalendarPass2026!"
+            keytool -genkeypair -v \
+              -keystore "$KEYSTORE_FILE" \
+              -alias "upload" \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -storepass "$PASS" \
+              -keypass "$PASS" \
+              -dname "CN=Luach Hebrew Calendar, OU=Mobile App, O=Luach, L=Jerusalem, ST=Jerusalem, C=IL"
+            
+            echo "STORE_PASSWORD=$PASS" >> $GITHUB_ENV
+            echo "KEY_PASSWORD=$PASS" >> $GITHUB_ENV
+            echo "KEY_ALIAS=upload" >> $GITHUB_ENV
+            echo "Keystore created successfully."
+          fi
+          echo "KEYSTORE_PATH=$KEYSTORE_FILE" >> $GITHUB_ENV
+
+      - name: Build Signed Release APK
+        env:
+          KEYSTORE_PATH: ${{ env.KEYSTORE_PATH }}
+          STORE_PASSWORD: ${{ env.STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ env.KEY_PASSWORD }}
+          KEY_ALIAS: ${{ env.KEY_ALIAS }}
+        run: ./gradlew assembleRelease --stacktrace
+
+      - name: Build Signed Release AAB (Android App Bundle for Google Play)
+        env:
+          KEYSTORE_PATH: ${{ env.KEYSTORE_PATH }}
+          STORE_PASSWORD: ${{ env.STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ env.KEY_PASSWORD }}
+          KEY_ALIAS: ${{ env.KEY_ALIAS }}
+        run: ./gradlew bundleRelease --stacktrace
+
+      - name: Prepare Output Files
+        run: |
+          mkdir -p release-artifacts
+          
+          # Find and copy generated APK
+          APK_PATH=$(find app/build/outputs/apk/release -name "*.apk" | head -n 1)
+          if [ -f "$APK_PATH" ]; then
+            cp "$APK_PATH" release-artifacts/Luach-Hebrew-Calendar-release.apk
+            echo "APK copied to release-artifacts."
+          fi
+          
+          # Find and copy generated AAB
+          AAB_PATH=$(find app/build/outputs/bundle/release -name "*.aab" | head -n 1)
+          if [ -f "$AAB_PATH" ]; then
+            cp "$AAB_PATH" release-artifacts/Luach-Hebrew-Calendar-release.aab
+            echo "AAB copied to release-artifacts."
+          fi
+          
+          # Save keystore for user backup
+          cp "${{ env.KEYSTORE_PATH }}" release-artifacts/upload-keystore.jks
+          
+          # Create info file
+          cat << 'EOF' > release-artifacts/RELEASE_SIGNING_INFO.txt
+          ==================================================
+          LUACH HEBREW CALENDAR - RELEASE SIGNING DETAILS
+          ==================================================
+          Package Name (ApplicationId): com.hebrewcalendar.gecckocreator
+          
+          AAB File (for Google Play Console):
+          - Luach-Hebrew-Calendar-release.aab
+          
+          APK File (for direct installation / testing):
+          - Luach-Hebrew-Calendar-release.apk
+          
+          Keystore File (Backup this securely for future Play Store updates!):
+          - upload-keystore.jks
+          Alias: upload
+          Password: LuachCalendarPass2026! (or your GitHub Secret if provided)
+          ==================================================
+          EOF
+
+      - name: Upload Signed Play Store AAB
+        uses: actions/upload-artifact@v4
+        with:
+          name: PlayStore-Release-AAB
+          path: release-artifacts/Luach-Hebrew-Calendar-release.aab
+          retention-days: 30
+
+      - name: Upload Direct Install APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: DirectInstall-Release-APK
+          path: release-artifacts/Luach-Hebrew-Calendar-release.apk
+          retention-days: 30
+
+      - name: Upload All Release Artifacts & Keystore Backup
+        uses: actions/upload-artifact@v4
+        with:
+          name: Complete-Release-Package
+          path: release-artifacts/
+          retention-days: 30
